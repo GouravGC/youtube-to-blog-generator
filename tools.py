@@ -5,15 +5,20 @@ from functools import lru_cache
 from typing import Type
 from urllib.parse import urlparse, parse_qs
 
+from dotenv import load_dotenv
+from langsmith import traceable
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from youtube_transcript_api import YouTubeTranscriptApi
+
+load_dotenv()
 
 
 # --------------------------------------------------
 # YOUTUBE URL VALIDATION
 # --------------------------------------------------
 
+@traceable(name="validate_youtube_url", run_type="tool")
 def extract_video_id(video_url: str) -> str:
 
     if not video_url or not video_url.strip():
@@ -57,12 +62,11 @@ def extract_video_id(video_url: str) -> str:
 # VIDEO TITLE
 # --------------------------------------------------
 
+@traceable(name="fetch_youtube_video_title", run_type="tool")
 @lru_cache(maxsize=32)
 def fetch_video_title(video_id: str) -> str:
 
-    video_url = (
-        f"https://www.youtube.com/watch?v={video_id}"
-    )
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
 
     try:
         response = requests.get(
@@ -88,6 +92,14 @@ def fetch_video_title(video_id: str) -> str:
 # TRANSCRIPT EXTRACTION
 # --------------------------------------------------
 
+@traceable(
+    name="youtube_transcript_extraction",
+    run_type="tool",
+    process_outputs=lambda output: {
+        "language": output[1],
+        "character_count": len(output[0])
+    }
+)
 @lru_cache(maxsize=16)
 def _fetch_transcript_data(video_id: str):
 
@@ -119,6 +131,7 @@ def _fetch_transcript_data(video_id: str):
         ) from error
 
 
+@traceable(name="fetch_video_transcript", run_type="tool")
 def fetch_video_transcript(video_id: str):
 
     return _fetch_transcript_data(video_id)
@@ -151,12 +164,9 @@ class YouTubeTranscriptTool(BaseTool):
 
         try:
             video_id = extract_video_id(video_url)
-
             title = fetch_video_title(video_id)
 
-            transcript, language = fetch_video_transcript(
-                video_id
-            )
+            transcript, language = fetch_video_transcript(video_id)
 
             return (
                 f"VIDEO TITLE: {title}\n"

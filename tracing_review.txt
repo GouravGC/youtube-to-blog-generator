@@ -1,0 +1,993 @@
+
+(agentic_ai) C:\Users\GC\Desktop\Krish Naik sir\AgenticAI\Via Crewai\Basic Project Agentic AI>(echo.   & echo ========== agents.py ==========   & type "agents.py" ) 
+ 
+========== agents.py ========== 
+import os
+
+from dotenv import load_dotenv
+from crewai import Agent, LLM
+
+load_dotenv()
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+if not OPENROUTER_API_KEY:
+    raise ValueError(
+        "OPENROUTER_API_KEY missing in .env"
+    )
+
+
+my_llm = LLM(
+    model="openrouter/openrouter/free",
+    api_key=OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1",
+    temperature=0.2
+)
+
+
+blog_researcher = Agent(
+    role="YouTube Video Researcher",
+
+    goal=(
+        "Carefully analyze the supplied YouTube transcript "
+        "and identify its important concepts, explanations, "
+        "examples, technical details and key takeaways."
+    ),
+
+    backstory=(
+        "You are an experienced technical researcher specializing "
+        "in Artificial Intelligence, Machine Learning, Data Science, "
+        "Deep Learning and Generative AI. You extract meaningful "
+        "knowledge from video transcripts without inventing facts."
+    ),
+
+    verbose=True,
+    memory=False,
+    tools=[],
+    llm=my_llm,
+    allow_delegation=False
+)
+
+
+blog_writer = Agent(
+    role="Professional Technical Blog Writer",
+
+    goal=(
+        "Transform the research findings into a comprehensive, "
+        "well-structured and engaging technical blog post."
+    ),
+
+    backstory=(
+        "You are a professional technical content writer. "
+        "You explain complex topics in clear language, use "
+        "appropriate headings, practical examples and logical "
+        "sections, while maintaining technical accuracy."
+    ),
+
+    verbose=True,
+    memory=False,
+    tools=[],
+    llm=my_llm,
+    allow_delegation=False
+)
+(agentic_ai) C:\Users\GC\Desktop\Krish Naik sir\AgenticAI\Via Crewai\Basic Project Agentic AI>(echo.   & echo ========== tasks.py ==========   & type "tasks.py" ) 
+ 
+========== tasks.py ========== 
+from crewai import Task
+from agents import blog_researcher, blog_writer
+
+
+def create_tasks():
+
+    research_task = Task(
+        description=(
+            "Analyze the supplied YouTube transcript carefully.\n\n"
+
+            "VIDEO TITLE: {video_title}\n"
+            "VIDEO URL: {video_url}\n\n"
+
+            "TRANSCRIPT:\n"
+            "{transcript}\n\n"
+
+            "YOUR RESPONSIBILITY:\n"
+            "Extract reliable research notes for a short technical blog.\n\n"
+
+            "Identify:\n"
+            "1. The central subject of the video.\n"
+            "2. The most important concepts explained.\n"
+            "3. Technical terminology and its meaning.\n"
+            "4. Practical examples explicitly discussed.\n"
+            "5. Important relationships between concepts.\n\n"
+
+            "STRICT ACCURACY RULES:\n"
+            "- Use only information supported by the transcript.\n"
+            "- Never invent examples, statistics, applications or facts.\n"
+            "- Do not add outside knowledge to fill missing information.\n"
+            "- If an example is unclear or absent, leave it out.\n"
+            "- Do not mistake speculation for something stated in the video.\n"
+            "- Do not repeat the same concept in different words.\n\n"
+
+            "OUTPUT RULES:\n"
+            "- Do not write the blog yourself.\n"
+            "- Produce structured, concise research notes.\n"
+            "- Maximum 150 words.\n"
+            "- Include only information useful for the final blog."
+        ),
+        expected_output=(
+            "Accurate research notes of no more than 150 words, "
+            "covering the video's central topic, key concepts, "
+            "technical explanations and transcript-supported examples."
+        ),
+        agent=blog_researcher
+    )
+
+    write_task = Task(
+        description=(
+            "Write a concise and technically accurate blog using "
+            "ONLY the research notes produced by the researcher.\n\n"
+
+            "VIDEO TITLE: {video_title}\n\n"
+
+            "STRICT CONTENT REQUIREMENTS:\n"
+            "1. Write approximately 300-400 tokens in total, "
+            "including the title.\n"
+            "2. Start with one meaningful Markdown heading.\n"
+            "3. Introduce the central topic briefly.\n"
+            "4. Explain the most important concepts clearly.\n"
+            "5. Include one transcript-supported example if available.\n"
+            "6. End with a short conclusion.\n"
+            "7. Use clear, professional and technically accurate language.\n\n"
+
+            "STRICT ACCURACY REQUIREMENTS:\n"
+            "- Use only facts present in the research notes.\n"
+            "- Do not introduce external information.\n"
+            "- Do not invent industry applications or use cases.\n"
+            "- Do not add unsupported company or product examples.\n"
+            "- If the research notes do not contain an example, "
+            "do not manufacture one.\n"
+            "- Do not exaggerate claims made in the video.\n\n"
+
+            "STRICT FORMATTING REQUIREMENTS:\n"
+            "- Return only the blog in Markdown.\n"
+            "- Use short paragraphs.\n"
+            "- Avoid unnecessary headings and bullet lists.\n"
+            "- Do not include a separate key takeaways section.\n"
+            "- Do not include a preface or explanation about the blog.\n"
+            "- Avoid repetition and filler sentences.\n\n"
+
+            "IMPORTANT:\n"
+            "This is a concise blog, not a comprehensive article. "
+            "Prioritize the most valuable information and stay "
+            "within the requested 300-400-token target."
+        ),
+        expected_output=(
+            "A concise Markdown technical blog of approximately "
+            "300-400 tokens, including its title, based exclusively "
+            "on the researcher's notes."
+        ),
+        agent=blog_writer,
+        context=[research_task],
+        async_execution=False
+    )
+
+    return research_task, write_task
+(agentic_ai) C:\Users\GC\Desktop\Krish Naik sir\AgenticAI\Via Crewai\Basic Project Agentic AI>(echo.   & echo ========== crew.py ==========   & type "crew.py" ) 
+ 
+========== crew.py ========== 
+
+import time
+
+import tiktoken
+from dotenv import load_dotenv
+from crewai import Agent, Crew, Process, Task
+from langsmith import traceable
+
+load_dotenv()
+
+
+# --------------------------------------------------
+# TOKEN COUNTING
+# --------------------------------------------------
+
+def count_tokens(text: str) -> int:
+    encoding = tiktoken.get_encoding("cl100k_base")
+    return len(encoding.encode(text))
+
+
+# --------------------------------------------------
+# 1. RESEARCHER AGENT EXECUTION
+# --------------------------------------------------
+
+@traceable(
+    name="researcher_agent",
+    run_type="chain",
+    process_inputs=lambda inputs: {
+        **inputs,
+        "transcript": (
+            f"[Transcript redacted: "
+            f"{len(inputs.get('transcript', ''))} characters]"
+        )
+    }
+)
+def run_researcher(video_url: str, video_title: str, transcript: str):
+
+    from agents import blog_researcher
+    from tasks import create_tasks
+
+    research_task, _ = create_tasks()
+
+    research_crew = Crew(
+        agents=[blog_researcher],
+        tasks=[research_task],
+        process=Process.sequential,
+        memory=False,
+        cache=True,
+        verbose=True
+    )
+
+    result = research_crew.kickoff(
+        inputs={
+            "video_url": video_url,
+            "video_title": video_title,
+            "transcript": transcript
+        }
+    )
+
+    research_notes = result.raw.strip()
+
+    if not research_notes:
+        raise ValueError("Researcher returned empty research notes.")
+
+    return research_notes
+
+
+# --------------------------------------------------
+# 2. WRITER AGENT EXECUTION
+# --------------------------------------------------
+
+@traceable(
+    name="writer_agent",
+    run_type="chain"
+)
+def run_writer(
+    video_title: str,
+    research_notes: str,
+    writer_description: str,
+    expected_output: str
+):
+
+    from agents import blog_writer
+
+    description = writer_description.replace(
+        "{video_title}",
+        video_title
+    )
+
+    description += (
+        "\n\nRESEARCH NOTES FROM THE RESEARCHER:\n"
+        f"{research_notes}\n\n"
+        "Use only these research notes as factual source material."
+    )
+
+    writer_task = Task(
+        description=description,
+        expected_output=expected_output,
+        agent=blog_writer,
+        async_execution=False
+    )
+
+    writer_crew = Crew(
+        agents=[blog_writer],
+        tasks=[writer_task],
+        process=Process.sequential,
+        memory=False,
+        cache=False,
+        verbose=True
+    )
+
+    result = writer_crew.kickoff()
+
+    blog = result.raw.strip()
+
+    if not blog:
+        raise ValueError("Writer returned an empty blog.")
+
+    token_count = count_tokens(blog)
+
+    print(f"\nInitial blog token count: {token_count}")
+
+    # One revision attempt if the blog exceeds 400 tokens.
+    if token_count > 400:
+
+        print("Blog exceeds 400 tokens. Requesting revision...")
+
+        revision_task = Task(
+            description=(
+                "Rewrite this blog to contain 300-400 tokens, "
+                "including its title.\n\n"
+                "Preserve the important technical information.\n"
+                "Use only facts from the original blog.\n"
+                "Do not introduce new facts or examples.\n"
+                "Return only the revised Markdown blog.\n\n"
+                f"ORIGINAL BLOG:\n{blog}"
+            ),
+            expected_output=(
+                "A concise Markdown blog of 300-400 tokens."
+            ),
+            agent=blog_writer,
+            async_execution=False
+        )
+
+        revision_crew = Crew(
+            agents=[blog_writer],
+            tasks=[revision_task],
+            process=Process.sequential,
+            memory=False,
+            cache=False,
+            verbose=True
+        )
+
+        revised_result = revision_crew.kickoff()
+        revised_blog = revised_result.raw.strip()
+        revised_count = count_tokens(revised_blog)
+
+        print(f"Revised blog token count: {revised_count}")
+
+        if abs(revised_count - 350) < abs(token_count - 350):
+            blog = revised_blog
+            token_count = revised_count
+
+    print(f"Final blog token count: {token_count}")
+
+    return {
+        "blog": blog,
+        "token_count": token_count
+    }
+
+
+# --------------------------------------------------
+# 3. FINAL WORKFLOW OUTPUT
+# --------------------------------------------------
+
+@traceable(
+    name="final_workflow_output",
+    run_type="chain"
+)
+def record_final_output(
+    video_title: str,
+    blog: str,
+    token_count: int,
+    execution_time: float
+):
+
+    return {
+        "status": "success",
+        "video_title": video_title,
+        "blog": blog,
+        "token_count": token_count,
+        "execution_time_seconds": round(execution_time, 2)
+    }
+
+
+# --------------------------------------------------
+# PARENT WORKFLOW
+# --------------------------------------------------
+
+@traceable(
+    name="youtube_blog_workflow",
+    run_type="chain",
+    process_inputs=lambda inputs: {
+        **inputs,
+        "transcript": (
+            f"[Transcript redacted: "
+            f"{len(inputs.get('transcript', ''))} characters]"
+        )
+    }
+)
+def generate_blog(
+    video_url: str,
+    video_title: str,
+    transcript: str
+):
+
+    from tasks import create_tasks
+
+    start_time = time.perf_counter()
+
+    # Create the original task definitions.
+    _, write_task = create_tasks()
+
+    # Stage 1: Researcher.
+    research_notes = run_researcher(
+        video_url=video_url,
+        video_title=video_title,
+        transcript=transcript
+    )
+
+    # Stage 2: Writer.
+    writer_result = run_writer(
+        video_title=video_title,
+        research_notes=research_notes,
+        writer_description=write_task.description,
+        expected_output=write_task.expected_output
+    )
+
+    blog = writer_result["blog"]
+    token_count = writer_result["token_count"]
+
+    execution_time = time.perf_counter() - start_time
+
+    # Stage 3: Final output.
+    final_result = record_final_output(
+        video_title=video_title,
+        blog=blog,
+        token_count=token_count,
+        execution_time=execution_time
+    )
+
+    print("\n========== WORKFLOW SUMMARY ==========")
+    print("Status:", final_result["status"])
+    print("Video:", video_title)
+    print("Blog tokens:", token_count)
+    print("Execution time:", final_result["execution_time_seconds"], "seconds")
+    print("======================================")
+
+    return final_result["blog"]
+
+(agentic_ai) C:\Users\GC\Desktop\Krish Naik sir\AgenticAI\Via Crewai\Basic Project Agentic AI>(echo.   & echo ========== tools.py ==========   & type "tools.py" ) 
+ 
+========== tools.py ========== 
+import re
+import requests
+
+from functools import lru_cache
+from typing import Type
+from urllib.parse import urlparse, parse_qs
+
+from pydantic import BaseModel, Field
+from crewai.tools import BaseTool
+from youtube_transcript_api import YouTubeTranscriptApi
+
+
+# --------------------------------------------------
+# YOUTUBE URL VALIDATION
+# --------------------------------------------------
+
+def extract_video_id(video_url: str) -> str:
+
+    if not video_url or not video_url.strip():
+        raise ValueError("YouTube URL cannot be empty.")
+
+    parsed = urlparse(video_url.strip())
+    hostname = parsed.netloc.lower().split(":")[0]
+
+    video_id = None
+
+    if hostname in ("youtu.be", "www.youtu.be"):
+        video_id = parsed.path.strip("/").split("/")[0]
+
+    elif hostname in (
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com"
+    ):
+        if parsed.path == "/watch":
+            video_id = parse_qs(parsed.query).get("v", [None])[0]
+
+        else:
+            match = re.match(
+                r"^/(?:shorts|embed|live|v)/([^/?]+)",
+                parsed.path
+            )
+
+            if match:
+                video_id = match.group(1)
+
+    if not video_id or not re.fullmatch(
+        r"[A-Za-z0-9_-]{11}", video_id
+    ):
+        raise ValueError("Invalid or unsupported YouTube URL.")
+
+    return video_id
+
+
+# --------------------------------------------------
+# VIDEO TITLE
+# --------------------------------------------------
+
+@lru_cache(maxsize=32)
+def fetch_video_title(video_id: str) -> str:
+
+    video_url = (
+        f"https://www.youtube.com/watch?v={video_id}"
+    )
+
+    try:
+        response = requests.get(
+            "https://www.youtube.com/oembed",
+            params={
+                "url": video_url,
+                "format": "json"
+            },
+            timeout=20
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        return data.get("title", "YouTube Video")
+
+    except requests.RequestException:
+        return f"YouTube Video ({video_id})"
+
+
+# --------------------------------------------------
+# TRANSCRIPT EXTRACTION
+# --------------------------------------------------
+
+@lru_cache(maxsize=16)
+def _fetch_transcript_data(video_id: str):
+
+    try:
+        api = YouTubeTranscriptApi()
+
+        transcript_data = api.fetch(
+            video_id,
+            languages=["en"]
+        )
+
+        transcript = "\n".join(
+            segment.text
+            for segment in transcript_data
+        )
+
+        language = transcript_data.language
+
+        if not transcript.strip():
+            raise ValueError(
+                "The video returned an empty transcript."
+            )
+
+        return transcript, language
+
+    except Exception as error:
+        raise RuntimeError(
+            f"Unable to retrieve YouTube transcript: {error}"
+        ) from error
+
+
+def fetch_video_transcript(video_id: str):
+
+    return _fetch_transcript_data(video_id)
+
+
+# --------------------------------------------------
+# CREWAI TOOL
+# --------------------------------------------------
+
+class YouTubeTranscriptInput(BaseModel):
+
+    video_url: str = Field(
+        description="Public YouTube video URL."
+    )
+
+
+class YouTubeTranscriptTool(BaseTool):
+
+    name: str = "YouTube Transcript Extractor"
+
+    description: str = (
+        "Retrieves available English captions directly from "
+        "YouTube using the youtube-transcript-api package. "
+        "Does not require an API key or local transcription model."
+    )
+
+    args_schema: Type[BaseModel] = YouTubeTranscriptInput
+
+    def _run(self, video_url: str) -> str:
+
+        try:
+            video_id = extract_video_id(video_url)
+
+            title = fetch_video_title(video_id)
+
+            transcript, language = fetch_video_transcript(
+                video_id
+            )
+
+            return (
+                f"VIDEO TITLE: {title}\n"
+                f"LANGUAGE: {language}\n"
+                f"COMPLETE TRANSCRIPT:\n\n"
+                f"{transcript}"
+            )
+
+        except Exception as error:
+            return f"Transcript extraction error: {error}"
+
+
+youtube_transcript_tool = YouTubeTranscriptTool()
+
+# Compatibility with existing agents.py imports
+yt_tool = youtube_transcript_tool
+(agentic_ai) C:\Users\GC\Desktop\Krish Naik sir\AgenticAI\Via Crewai\Basic Project Agentic AI>(echo.   & echo ========== app.py ==========   & type "app.py" ) 
+ 
+========== app.py ========== 
+import re
+import streamlit as st
+
+from tools import (
+    extract_video_id,
+    fetch_video_title,
+    fetch_video_transcript
+)
+
+from crew import generate_blog
+
+
+# --------------------------------------------------
+# PAGE CONFIGURATION
+# --------------------------------------------------
+
+st.set_page_config(
+    page_title="YouTube to Blog Generator",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+
+# --------------------------------------------------
+# CUSTOM STYLING
+# --------------------------------------------------
+
+st.markdown(
+    """
+    <style>
+
+    .main-title {
+        font-size: 2.7rem;
+        font-weight: 800;
+        text-align: center;
+        margin-bottom: 0.2rem;
+    }
+
+    .subtitle {
+        text-align: center;
+        color: #888888;
+        font-size: 1.05rem;
+        margin-bottom: 2rem;
+    }
+
+    .feature-card {
+        padding: 20px;
+        border-radius: 12px;
+        border: 1px solid rgba(128,128,128,0.25);
+        text-align: center;
+        min-height: 125px;
+    }
+
+    .stButton > button {
+        width: 100%;
+        border-radius: 9px;
+        font-weight: 600;
+        min-height: 45px;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
+
+if "generated_blog" not in st.session_state:
+    st.session_state.generated_blog = None
+
+if "video_title" not in st.session_state:
+    st.session_state.video_title = None
+
+if "video_url" not in st.session_state:
+    st.session_state.video_url = None
+
+
+# --------------------------------------------------
+# HEADER
+# --------------------------------------------------
+
+st.markdown(
+    '<div class="main-title">🎬 YouTube to Blog Generator</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="subtitle">
+        Transform YouTube videos into detailed, structured
+        technical blog posts using CrewAI agents.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# --------------------------------------------------
+# FEATURES
+# --------------------------------------------------
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown(
+        """
+        <div class="feature-card">
+            <h2>🔗</h2>
+            <b>Any Supported Video</b>
+            <p>Submit an individual YouTube video URL.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with col2:
+    st.markdown(
+        """
+        <div class="feature-card">
+            <h2>🤖</h2>
+            <b>CrewAI Agents</b>
+            <p>Researcher and Writer collaborate to create blogs.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with col3:
+    st.markdown(
+        """
+        <div class="feature-card">
+            <h2>📄</h2>
+            <b>Preview and Download</b>
+            <p>Read your blog and download it as a TXT file.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+st.divider()
+
+
+# --------------------------------------------------
+# VIDEO INPUT
+# --------------------------------------------------
+
+st.subheader("🔗 Enter YouTube Video")
+
+video_url = st.text_input(
+    "YouTube video URL",
+    placeholder="https://www.youtube.com/watch?v=XXXXXXXXXXX",
+    help="Supported formats include watch URLs, youtu.be, Shorts and embed URLs."
+)
+
+generate_button = st.button(
+    "🚀 Generate Blog",
+    type="primary"
+)
+
+
+# --------------------------------------------------
+# GENERATION WORKFLOW
+# --------------------------------------------------
+
+if generate_button:
+
+    if not video_url.strip():
+
+        st.error("Please enter a YouTube video URL.")
+
+    else:
+
+        try:
+
+            st.session_state.generated_blog = None
+
+            with st.status(
+                "Preparing your blog...",
+                expanded=True
+            ) as status:
+
+                # STEP 1: VALIDATE URL
+
+                st.write("🔍 Validating YouTube URL...")
+
+                video_id = extract_video_id(video_url)
+
+                # STEP 2: FETCH VIDEO TITLE
+
+                st.write("📺 Fetching video information...")
+
+                video_title = fetch_video_title(video_id)
+
+                st.write(f"**Video:** {video_title}")
+
+                # STEP 3: EXTRACT TRANSCRIPT
+
+                st.write("📝 Extracting video transcript...")
+
+                transcript, language = fetch_video_transcript(
+                    video_id
+                )
+
+                transcript_length = len(transcript)
+
+                st.write(
+                    f"Transcript extracted successfully. "
+                    f"Language: {language}"
+                )
+
+                # Limit extremely large transcripts
+
+                max_transcript_chars = 60000
+
+                if transcript_length > max_transcript_chars:
+
+                    transcript = transcript[:max_transcript_chars]
+
+                    st.warning(
+                        "This transcript is very long. "
+                        "The first 60,000 characters will be used "
+                        "for this generation."
+                    )
+
+                st.write(
+                    f"Transcript size: {len(transcript):,} characters"
+                )
+
+                # STEP 4: CREWAI BLOG GENERATION
+
+                st.write("🤖 Starting CrewAI agents...")
+
+                blog = generate_blog(
+                    video_url=video_url,
+                    video_title=video_title,
+                    transcript=transcript
+                )
+
+                if not blog or not blog.strip():
+
+                    raise ValueError(
+                        "CrewAI returned an empty blog."
+                    )
+
+                st.session_state.generated_blog = blog
+                st.session_state.video_title = video_title
+                st.session_state.video_url = video_url
+
+                status.update(
+                    label="Blog generated successfully!",
+                    state="complete",
+                    expanded=False
+                )
+
+            st.success("Your YouTube blog is ready!")
+
+        except Exception as error:
+
+            st.error(
+                f"Something went wrong: {str(error)}"
+            )
+
+
+# --------------------------------------------------
+# BLOG PREVIEW
+# --------------------------------------------------
+
+if st.session_state.generated_blog:
+
+    st.divider()
+
+    st.subheader("📖 Generated Blog Preview")
+
+    st.caption(
+        f"Source video: {st.session_state.video_title}"
+    )
+
+    blog_content = st.session_state.generated_blog
+
+    preview_tab, raw_tab = st.tabs(
+        ["📖 Blog Preview", "📝 Markdown Source"]
+    )
+
+    with preview_tab:
+
+        st.markdown(
+            blog_content,
+            unsafe_allow_html=False
+        )
+
+    with raw_tab:
+
+        st.code(
+            blog_content,
+            language="markdown"
+        )
+
+    st.divider()
+
+    # Create safe filename
+
+    filename = re.sub(
+        r"[^a-zA-Z0-9_-]",
+        "_",
+        st.session_state.video_title
+    ).strip("_")
+
+    filename = filename[:70] or "youtube_blog"
+
+    st.download_button(
+        label="⬇️ Download Complete Blog (.txt)",
+
+        data=blog_content,
+
+        file_name=f"{filename}.txt",
+
+        mime="text/plain",
+
+        type="primary"
+    )
+
+    st.caption(
+        "Your generated blog is available for preview and download."
+    )
+
+
+# --------------------------------------------------
+# FOOTER
+# --------------------------------------------------
+
+st.divider()
+
+st.markdown(
+    """
+    <div style="text-align:center; color:gray;">
+        Built with Streamlit, CrewAI and OpenRouter
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+(agentic_ai) C:\Users\GC\Desktop\Krish Naik sir\AgenticAI\Via Crewai\Basic Project Agentic AI>(echo.   & echo ========== requirements.txt ==========   & type "requirements.txt" ) 
+ 
+========== requirements.txt ========== 
+# Python==3.11.10
+
+crewai==1.15.35
+crewai-tools==1.15.35
+streamlit==1.45.1
+youtube-transcript-api==1.2.4
+langsmith==0.14.17
+pytest==8.4.1
+(agentic_ai) C:\Users\GC\Desktop\Krish Naik sir\AgenticAI\Via Crewai\Basic Project Agentic AI>(echo.   & echo ========== Dockerfile ==========   & type "Dockerfile" ) 
+ 
+========== Dockerfile ========== 
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
