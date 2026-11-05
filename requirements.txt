@@ -4,4 +4,3 @@ crewai==1.15.35
 crewai-tools==1.15.35
 streamlit==1.45.1
 youtube-transcript-api==1.2.4
-youtube-transcript-api==1.2.4
